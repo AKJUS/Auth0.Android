@@ -1,5 +1,20 @@
 # Change Log
 
+## [3.4.0](https://github.com/auth0/Auth0.Android/tree/3.4.0) (2025-02-13)
+[Full Changelog](https://github.com/auth0/Auth0.Android/compare/3.3.0...3.4.0)
+
+**Added**
+- Support Process Death in WebAuthProvider [\#784](https://github.com/auth0/Auth0.Android/pull/784) ([ahibrahimleague](https://github.com/ahibrahimleague))
+
+**Changed**
+- Updated compile and target sdk version to 35 [\#799](https://github.com/auth0/Auth0.Android/pull/799) ([pmathew92](https://github.com/pmathew92))
+
+## [3.3.0](https://github.com/auth0/Auth0.Android/tree/3.3.0) (2025-02-03)
+[Full Changelog](https://github.com/auth0/Auth0.Android/compare/3.2.1...3.3.0)
+
+**Added**
+- Add support for custom token exchange [\#789](https://github.com/auth0/Auth0.Android/pull/789) ([pmathew92](https://github.com/pmathew92))
+
 ## [3.2.1](https://github.com/auth0/Auth0.Android/tree/3.2.1) (2024-12-06)
 [Full Changelog](https://github.com/auth0/Auth0.Android/compare/3.2.0...3.2.1)
 
