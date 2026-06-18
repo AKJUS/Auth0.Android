@@ -177,6 +177,8 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
         if (TextUtils.isEmpty(credentials.accessToken) && TextUtils.isEmpty(credentials.idToken)) {
             throw CredentialsManagerException.INVALID_CREDENTIALS
         }
+        // IPSIE session_expiry: reject a session already past its ceiling at creation time.
+        validateSessionExpiryAtCreation(credentials.idToken)
         val json = gson.toJson(credentials)
         val canRefresh = !TextUtils.isEmpty(credentials.refreshToken)
         Log.d(TAG, "Trying to encrypt the given data using the private key.")
@@ -190,6 +192,9 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
             storage.store(LEGACY_KEY_CACHE_EXPIRES_AT, credentials.expiresAt.time)
             storage.store(KEY_CAN_REFRESH, canRefresh)
             storage.store(KEY_TOKEN_TYPE, credentials.type)
+            // Preserve the session_expiry ceiling across refreshes: only ever written, never cleared,
+            // so a refresh whose ID token omits the claim does not silently remove the limit.
+            persistSessionExpiry(credentials.idToken)
             saveDPoPThumbprint(credentials)
         } catch (e: IncompatibleDeviceException) {
             throw CredentialsManagerException(
@@ -650,6 +655,15 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
         forceRefresh: Boolean,
         callback: Callback<Credentials, CredentialsManagerException>
     ) {
+        // IPSIE session_expiry: short-circuit before any biometric prompt or refresh. The ceiling is
+        // read from the value persisted at login (KEY_SESSION_EXPIRY); past it we clear and surface the
+        // dedicated error rather than prompting biometrics for a session that can no longer be served.
+        if (isSessionExpired(null)) {
+            clearCredentials()
+            callback.onFailure(CredentialsManagerException.SESSION_EXPIRED)
+            return
+        }
+
         if (!hasValidCredentials(minTtl.toLong())) {
             callback.onFailure(CredentialsManagerException.NO_CREDENTIALS)
             return
@@ -736,6 +750,7 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
         storage.remove(KEY_CAN_REFRESH)
         storage.remove(KEY_TOKEN_TYPE)
         storage.remove(KEY_DPOP_THUMBPRINT)
+        storage.remove(KEY_SESSION_EXPIRY)
         clearBiometricSession()
         Log.d(TAG, "Credentials were just removed from the storage")
     }
@@ -775,9 +790,16 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
         }
         val canRefresh = storage.retrieveBoolean(KEY_CAN_REFRESH)
         val emptyCredentials = TextUtils.isEmpty(encryptedEncoded)
-        return !(emptyCredentials || willExpire(
-            expiresAt, minTtl
-        ) && (canRefresh == null || !canRefresh))
+        if (emptyCredentials) {
+            return false
+        }
+        // IPSIE session_expiry: once the upstream-IdP ceiling passes, no valid credentials remain.
+        // The credentials blob is encrypted and cannot be decoded here, so the ceiling is read from
+        // the value persisted at login (KEY_SESSION_EXPIRY) via isSessionExpired(null).
+        if (isSessionExpired(null)) {
+            return false
+        }
+        return !(willExpire(expiresAt, minTtl) && (canRefresh == null || !canRefresh))
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
@@ -831,6 +853,14 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
                     TextUtils.isEmpty(credentials.accessToken) && TextUtils.isEmpty(credentials.idToken)
                 if (hasEmptyCredentials) {
                     callback.onFailure(CredentialsManagerException.NO_CREDENTIALS)
+                    return@execute
+                }
+                // IPSIE session_expiry: enforce the upstream-IdP session ceiling before serving any
+                // cached token or attempting a refresh. Past the ceiling, clear and surface the error
+                // so the refresh-token grant is never used to outlive the session.
+                if (isSessionExpired(credentials.idToken)) {
+                    clearCredentials()
+                    callback.onFailure(CredentialsManagerException.SESSION_EXPIRED)
                     return@execute
                 }
                 val willAccessTokenExpire = willExpire(expiresAt, minTtl.toLong())

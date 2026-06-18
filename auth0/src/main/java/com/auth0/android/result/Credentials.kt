@@ -79,4 +79,18 @@ public data class Credentials(
             return gson.fromJson(Jwt.decodeBase64(payload), UserProfile::class.java)
         }
 
+    /**
+     * The absolute session-expiry ceiling, in **Unix seconds**, asserted by the upstream identity
+     * provider via the IPSIE `session_expiry` claim in the ID token, or `null` when the connection
+     * does not emit the claim.
+     *
+     * This is a session-level ceiling that is independent of [expiresAt] (the access-token expiry):
+     * it usually sits much further out and caps how long the local session may live, regardless of
+     * access-token renewals. A `null` value means there is no such ceiling.
+     *
+     * The value is decoded on demand from [idToken] and is not stored as a separate field.
+     */
+    public val sessionExpiresAt: Long?
+        get() = runCatching { Jwt(idToken).sessionExpiry }.getOrNull()
+
 }

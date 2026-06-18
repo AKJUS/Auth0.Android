@@ -28,6 +28,19 @@ public abstract class BaseCredentialsManager internal constructor(
 
         @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
         internal const val KEY_TOKEN_TYPE = "com.auth0.token_type"
+
+        /**
+         * Storage key for the IPSIE `session_expiry` ceiling (Unix seconds), persisted at login so it
+         * survives a refresh whose ID token does not re-emit the claim. See [isSessionExpired].
+         */
+        @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+        internal const val KEY_SESSION_EXPIRY = "com.auth0.session_expiry"
+
+        /**
+         * Negative clock-skew leeway (seconds) applied when checking the `session_expiry` ceiling, so
+         * the session is treated as expired slightly *before* the wall-clock ceiling, never after.
+         */
+        private const val SESSION_EXPIRY_LEEWAY_SECONDS = 30L
     }
 
     private var _clock: Clock = ClockImpl()
@@ -300,6 +313,67 @@ public abstract class BaseCredentialsManager internal constructor(
      */
     protected fun hasExpired(expiresAt: Long): Boolean {
         return expiresAt <= currentTimeInMillis
+    }
+
+    /**
+     * Reads the IPSIE `session_expiry` ceiling (Unix seconds) from the given ID token, or null when
+     * the token is absent/unparseable or does not carry the claim.
+     */
+    private fun sessionExpiryFromIdToken(idToken: String?): Long? {
+        if (idToken.isNullOrBlank()) return null
+        return runCatching { jwtDecoder.decode(idToken).sessionExpiry }.getOrNull()
+    }
+
+    /**
+     * Checks whether the upstream-IdP session ceiling (`session_expiry`) has been reached.
+     *
+     * The ceiling is resolved in order: (1) the live claim in [idToken]; (2) the value persisted at
+     * login under [KEY_SESSION_EXPIRY] (so a refresh whose ID token omits the claim does not silently
+     * drop the ceiling); (3) if neither is present there is no ceiling and the session is NOT expired
+     * — a missing value must fall through to existing behavior, never be treated as already-expired.
+     *
+     * A small negative clock-skew leeway is applied so the session is treated as expired slightly
+     * before the wall-clock ceiling, never after.
+     */
+    protected fun isSessionExpired(idToken: String?): Boolean {
+        val sessionExpiry = sessionExpiryFromIdToken(idToken)
+            ?: storage.retrieveLong(KEY_SESSION_EXPIRY)
+            ?: return false
+        // A non-positive ceiling is not a valid Unix timestamp; treat it as "no ceiling" rather than
+        // already-expired (mirrors the guard in [willExpire] for unset/migration values).
+        if (sessionExpiry <= 0) {
+            return false
+        }
+        val nowSeconds = currentTimeInMillis / 1000
+        return nowSeconds + SESSION_EXPIRY_LEEWAY_SECONDS >= sessionExpiry
+    }
+
+    /**
+     * Persists the `session_expiry` ceiling read from the given ID token, if present.
+     *
+     * To preserve the ceiling across refreshes (the refresh grant does not re-emit `session_expiry`),
+     * the stored value is only ever written, never cleared, when a fresh ID token omits the claim.
+     * Call from `saveCredentials`.
+     */
+    protected fun persistSessionExpiry(idToken: String?) {
+        sessionExpiryFromIdToken(idToken)?.let { storage.store(KEY_SESSION_EXPIRY, it) }
+    }
+
+    /**
+     * Validates, at session-creation time, that the given ID token is not already past its
+     * `session_expiry` ceiling (i.e. `session_expiry <= iat`). Throws [CredentialsManagerException]
+     * with code `SESSION_EXPIRED` when it is, so an already-expired session is never persisted.
+     * No-op when the token is absent or does not carry both `session_expiry` and `iat`.
+     */
+    @Throws(CredentialsManagerException::class)
+    protected fun validateSessionExpiryAtCreation(idToken: String?) {
+        if (idToken.isNullOrBlank()) return
+        val jwt = runCatching { jwtDecoder.decode(idToken) }.getOrNull() ?: return
+        val sessionExpiry = jwt.sessionExpiry ?: return
+        val issuedAtSeconds = jwt.issuedAt?.time?.div(1000) ?: return
+        if (sessionExpiry <= issuedAtSeconds) {
+            throw CredentialsManagerException.SESSION_EXPIRED
+        }
     }
 
     /**

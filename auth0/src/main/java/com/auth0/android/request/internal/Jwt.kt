@@ -30,6 +30,13 @@ internal class Jwt(rawToken: String) {
     val authenticationTime: Date?
     val audience: List<String>
 
+    /**
+     * The IPSIE `session_expiry` claim: an absolute session-expiry ceiling in **Unix seconds**
+     * asserted by the upstream identity provider. Null when the connection does not emit the claim,
+     * which MUST be treated as "no ceiling".
+     */
+    val sessionExpiry: Long?
+
     init {
         parts = splitToken(rawToken)
         val jsonHeader = decodeBase64(parts[0])
@@ -53,6 +60,7 @@ internal class Jwt(rawToken: String) {
         authorizedParty = decodedPayload["azp"] as String?
         authenticationTime =
             (decodedPayload["auth_time"] as? Double)?.let { Date(it.toLong() * 1000) }
+        sessionExpiry = (decodedPayload["session_expiry"] as? Double)?.toLong()
         audience = when (val aud = decodedPayload["aud"]) {
             is String -> listOf(aud)
             is List<*> -> aud as List<String>
