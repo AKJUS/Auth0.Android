@@ -2735,6 +2735,28 @@ public class CredentialsManagerTest {
         verify(storage).remove("com.auth0.id_token")
     }
 
+    @Test
+    public fun shouldNotOverwriteStoredSessionExpiryWhenSavingRefreshedCredentials() {
+        val credentials: Credentials = CredentialsMock.create(
+            "idToken", "accessToken", "type", "refreshToken",
+            Date(CredentialsMock.ONE_HOUR_AHEAD_MS), "scope"
+        )
+        // A ceiling is already pinned from the initial login.
+        val pinnedCeiling = (CredentialsMock.ONE_HOUR_AHEAD_MS / 1000) + 100_000
+        Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry")).thenReturn(pinnedCeiling)
+        // The refreshed ID token re-emits a later session_expiry that must be ignored.
+        val jwtMock = mock<Jwt>()
+        Mockito.`when`(jwtMock.sessionExpiry).thenReturn(pinnedCeiling + 100_000)
+        Mockito.`when`(jwtMock.issuedAt).thenReturn(Date(CredentialsMock.CURRENT_TIME_MS))
+        Mockito.`when`(jwtMock.expiresAt).thenReturn(Date(CredentialsMock.ONE_HOUR_AHEAD_MS))
+        Mockito.`when`(jwtDecoder.decode("idToken")).thenReturn(jwtMock)
+
+        manager.saveCredentials(credentials)
+
+        // The pinned ceiling must not be moved by a refresh-grant claim.
+        verify(storage, never()).store(eq("com.auth0.session_expiry"), ArgumentMatchers.anyLong())
+    }
+
     private fun prepareJwtDecoderMockWithSessionExpiry(sessionExpiry: Long?) {
         val jwtMock = mock<Jwt>()
         Mockito.`when`(jwtMock.sessionExpiry).thenReturn(sessionExpiry)

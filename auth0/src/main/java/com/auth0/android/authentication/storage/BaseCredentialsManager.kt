@@ -349,14 +349,22 @@ public abstract class BaseCredentialsManager internal constructor(
     }
 
     /**
-     * Persists the `session_expiry` ceiling read from the given ID token, if present.
+     * Pins the `session_expiry` ceiling from the initial login and preserves it across refreshes.
      *
-     * To preserve the ceiling across refreshes (the refresh grant does not re-emit `session_expiry`),
-     * the stored value is only ever written, never cleared, when a fresh ID token omits the claim.
-     * Call from `saveCredentials`.
+     * The ceiling is read once and stamped onto the session at login: it is stored only when no value
+     * is already persisted. A `session_expiry` re-emitted on a later (refresh) grant is deliberately
+     * ignored, so the bound stays pinned to the initial-login value and a refresh can never extend the
+     * session past it. [clearCredentials] removes the stored value on logout, so the next login re-pins
+     * a fresh ceiling. Call from `saveCredentials`.
      */
     protected fun persistSessionExpiry(idToken: String?) {
-        sessionExpiryFromIdToken(idToken)?.let { storage.store(KEY_SESSION_EXPIRY, it) }
+        val incoming = sessionExpiryFromIdToken(idToken) ?: return
+        // A positive value is already pinned from the initial login -> keep it; ignore the claim
+        // re-emitted on this (refresh) grant. A null/non-positive stored value means nothing is pinned
+        // yet (mirrors the unset/migration guard in [isSessionExpired]), so stamp the ceiling now.
+        val pinned = storage.retrieveLong(KEY_SESSION_EXPIRY)
+        if (pinned != null && pinned > 0) return
+        storage.store(KEY_SESSION_EXPIRY, incoming)
     }
 
     /**
