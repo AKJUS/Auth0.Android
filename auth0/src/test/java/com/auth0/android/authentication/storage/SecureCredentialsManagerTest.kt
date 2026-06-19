@@ -3579,7 +3579,6 @@ public class SecureCredentialsManagerTest {
         Mockito.`when`(localAuthenticationManager.authenticate()).then {
             localAuthenticationManager.resultCallback.onSuccess(true)
         }
-        verifyNoMoreInteractions(client)
         val nowSeconds = CredentialsMock.CURRENT_TIME_MS / 1000
         // Stored ceiling already in the past.
         Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry")).thenReturn(nowSeconds - 100)
@@ -3593,10 +3592,11 @@ public class SecureCredentialsManagerTest {
         )
         // No biometric prompt should be raised for a dead session.
         verify(localAuthenticationManager, never()).authenticate()
-        // The breached session must be cleared. The refresh-token grant must never be used past the
-        // ceiling, asserted by verifyNoMoreInteractions(client) at the top of this test.
+        // The breached session must be cleared.
         verify(storage).remove("com.auth0.session_expiry")
         verify(storage).remove("com.auth0.credentials")
+        // The refresh-token grant must never be used past the ceiling.
+        verifyNoMoreInteractions(client)
     }
 
     @Test
@@ -3604,7 +3604,6 @@ public class SecureCredentialsManagerTest {
         Mockito.`when`(localAuthenticationManager.authenticate()).then {
             localAuthenticationManager.resultCallback.onSuccess(true)
         }
-        verifyNoMoreInteractions(client)
         val nowSeconds = CredentialsMock.CURRENT_TIME_MS / 1000
         // 10s ahead, but inside the 30s negative leeway -> treated as expired.
         Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry")).thenReturn(nowSeconds + 10)
@@ -3616,7 +3615,8 @@ public class SecureCredentialsManagerTest {
             exceptionCaptor.firstValue,
             Is.`is`(CredentialsManagerException.SESSION_EXPIRED)
         )
-        // No refresh past the ceiling, asserted by verifyNoMoreInteractions(client) at the top.
+        // No refresh past the ceiling.
+        verifyNoMoreInteractions(client)
     }
 
     @Test
@@ -3624,7 +3624,6 @@ public class SecureCredentialsManagerTest {
         Mockito.`when`(localAuthenticationManager.authenticate()).then {
             localAuthenticationManager.resultCallback.onSuccess(true)
         }
-        verifyNoMoreInteractions(client)
         val nowSeconds = CredentialsMock.CURRENT_TIME_MS / 1000
         Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry"))
             .thenReturn(nowSeconds + 100_000)
@@ -3635,7 +3634,8 @@ public class SecureCredentialsManagerTest {
 
         verify(callback).onSuccess(credentialsCaptor.capture())
         MatcherAssert.assertThat(credentialsCaptor.firstValue, Is.`is`(Matchers.notNullValue()))
-        // No refresh needed (token not expired), asserted by verifyNoMoreInteractions(client) at the top.
+        // No refresh needed (token not expired).
+        verifyNoMoreInteractions(client)
     }
 
     @Test
@@ -3643,7 +3643,6 @@ public class SecureCredentialsManagerTest {
         Mockito.`when`(localAuthenticationManager.authenticate()).then {
             localAuthenticationManager.resultCallback.onSuccess(true)
         }
-        verifyNoMoreInteractions(client)
         // No stored ceiling -> existing behavior, no regression.
         Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry")).thenReturn(null)
         val expiresAt = Date(CredentialsMock.CURRENT_TIME_MS + ONE_HOUR_SECONDS * 1000)
@@ -3653,6 +3652,7 @@ public class SecureCredentialsManagerTest {
 
         verify(callback).onSuccess(credentialsCaptor.capture())
         MatcherAssert.assertThat(credentialsCaptor.firstValue, Is.`is`(Matchers.notNullValue()))
+        verifyNoMoreInteractions(client)
     }
 
     @Test
@@ -3692,6 +3692,54 @@ public class SecureCredentialsManagerTest {
         manager.saveCredentials(credentials)
 
         verify(storage).store("com.auth0.session_expiry", sessionExpiry)
+    }
+
+    @Test
+    public fun shouldFailGetSsoCredentialsWithSessionExpiredWhenSessionCeilingReached() {
+        val nowSeconds = CredentialsMock.CURRENT_TIME_MS / 1000
+        insertTestCredentials(
+            hasIdToken = true,
+            hasAccessToken = true,
+            hasRefreshToken = true,
+            willExpireAt = Date(CredentialsMock.ONE_HOUR_AHEAD_MS),
+            scope = "scope"
+        )
+        // The decrypted ID token carries a session_expiry ceiling already in the past.
+        val jwtMock = mock<Jwt>()
+        Mockito.`when`(jwtMock.sessionExpiry).thenReturn(nowSeconds - 100)
+        Mockito.`when`(jwtDecoder.decode("idToken")).thenReturn(jwtMock)
+
+        manager.getSsoCredentials(ssoCallback)
+
+        verify(ssoCallback).onFailure(exceptionCaptor.capture())
+        MatcherAssert.assertThat(
+            exceptionCaptor.firstValue,
+            Is.`is`(CredentialsManagerException.SESSION_EXPIRED)
+        )
+        // The refresh-token grant must never be exchanged for SSO credentials past the ceiling.
+        verifyNoMoreInteractions(client)
+        verify(storage).remove("com.auth0.session_expiry")
+        verify(storage).remove("com.auth0.credentials")
+    }
+
+    @Test
+    public fun shouldFailGetApiCredentialsWithSessionExpiredWhenStoredCeilingReached() {
+        val nowSeconds = CredentialsMock.CURRENT_TIME_MS / 1000
+        // Stored ceiling already in the past; the encrypted blob need not be read.
+        Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry")).thenReturn(nowSeconds - 100)
+
+        manager.getApiCredentials("audience", "scope", callback = apiCredentialsCallback)
+
+        verify(apiCredentialsCallback).onFailure(exceptionCaptor.capture())
+        MatcherAssert.assertThat(
+            exceptionCaptor.firstValue,
+            Is.`is`(CredentialsManagerException.SESSION_EXPIRED)
+        )
+        // No biometric prompt and no refresh past the ceiling.
+        verify(localAuthenticationManager, never()).authenticate()
+        verifyNoMoreInteractions(client)
+        verify(storage).remove("com.auth0.session_expiry")
+        verify(storage).remove("com.auth0.credentials")
     }
 
     private fun insertTestCredentials(

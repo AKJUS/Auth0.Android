@@ -2695,6 +2695,46 @@ public class CredentialsManagerTest {
         verify(storage).store("com.auth0.session_expiry", sessionExpiry)
     }
 
+    @Test
+    public fun shouldFailGetSsoCredentialsWithSessionExpiredWhenSessionCeilingReached() {
+        val nowSeconds = CredentialsMock.CURRENT_TIME_MS / 1000
+        Mockito.`when`(storage.retrieveString("com.auth0.id_token")).thenReturn("idToken")
+        Mockito.`when`(storage.retrieveString("com.auth0.refresh_token")).thenReturn("refreshToken")
+        prepareJwtDecoderMockWithSessionExpiry(nowSeconds - 100)
+
+        manager.getSsoCredentials(ssoCallback)
+
+        verify(ssoCallback).onFailure(exceptionCaptor.capture())
+        MatcherAssert.assertThat(
+            exceptionCaptor.firstValue,
+            Is.`is`(CredentialsManagerException.SESSION_EXPIRED)
+        )
+        // The refresh-token grant must never be exchanged for SSO credentials past the ceiling.
+        verifyZeroInteractions(client)
+        verify(storage).remove("com.auth0.session_expiry")
+        verify(storage).remove("com.auth0.id_token")
+    }
+
+    @Test
+    public fun shouldFailGetApiCredentialsWithSessionExpiredWhenSessionCeilingReached() {
+        val nowSeconds = CredentialsMock.CURRENT_TIME_MS / 1000
+        Mockito.`when`(storage.retrieveString("com.auth0.id_token")).thenReturn("idToken")
+        Mockito.`when`(storage.retrieveString("com.auth0.refresh_token")).thenReturn("refreshToken")
+        prepareJwtDecoderMockWithSessionExpiry(nowSeconds - 100)
+
+        manager.getApiCredentials("audience", "scope", callback = apiCredentialsCallback)
+
+        verify(apiCredentialsCallback).onFailure(exceptionCaptor.capture())
+        MatcherAssert.assertThat(
+            exceptionCaptor.firstValue,
+            Is.`is`(CredentialsManagerException.SESSION_EXPIRED)
+        )
+        // The refresh-token grant must never be exchanged for API credentials past the ceiling.
+        verifyZeroInteractions(client)
+        verify(storage).remove("com.auth0.session_expiry")
+        verify(storage).remove("com.auth0.id_token")
+    }
+
     private fun prepareJwtDecoderMockWithSessionExpiry(sessionExpiry: Long?) {
         val jwtMock = mock<Jwt>()
         Mockito.`when`(jwtMock.sessionExpiry).thenReturn(sessionExpiry)

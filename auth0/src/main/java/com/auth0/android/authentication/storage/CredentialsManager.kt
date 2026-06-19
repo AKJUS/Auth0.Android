@@ -63,7 +63,11 @@ public class CredentialsManager @VisibleForTesting(otherwise = VisibleForTesting
      * Stores the given credentials in the storage. Must have an access_token or id_token and a expires_in value.
      *
      * @param credentials the credentials to save in the storage.
+     * @throws CredentialsManagerException with code `SESSION_EXPIRED` if the credentials carry an
+     * IPSIE `session_expiry` claim that is already past its ceiling at creation time, or with code
+     * `INVALID_CREDENTIALS` if neither an access_token nor an id_token is present.
      */
+    @Throws(CredentialsManagerException::class)
     override fun saveCredentials(credentials: Credentials) {
         if (TextUtils.isEmpty(credentials.accessToken) && TextUtils.isEmpty(credentials.idToken)) {
             throw CredentialsManagerException.INVALID_CREDENTIALS
@@ -134,6 +138,13 @@ public class CredentialsManager @VisibleForTesting(otherwise = VisibleForTesting
     ) {
         serialExecutor.execute {
             runCatchingOnExecutor(callback) {
+                // IPSIE session_expiry: enforce the upstream-IdP session ceiling before exchanging the
+                // refresh token, so the SSO exchange is never used to outlive the session.
+                if (isSessionExpired(storage.retrieveString(KEY_ID_TOKEN))) {
+                    clearCredentials()
+                    callback.onFailure(CredentialsManagerException.SESSION_EXPIRED)
+                    return@execute
+                }
                 val refreshToken = storage.retrieveString(KEY_REFRESH_TOKEN)
                 if (refreshToken.isNullOrEmpty()) {
                     callback.onFailure(CredentialsManagerException.NO_REFRESH_TOKEN)
@@ -593,6 +604,13 @@ public class CredentialsManager @VisibleForTesting(otherwise = VisibleForTesting
     ) {
         serialExecutor.execute {
             runCatchingOnExecutor(callback) {
+                // IPSIE session_expiry: enforce the upstream-IdP session ceiling before serving cached
+                // API credentials or exchanging the refresh token, so the session is never extended past it.
+                if (isSessionExpired(storage.retrieveString(KEY_ID_TOKEN))) {
+                    clearCredentials()
+                    callback.onFailure(CredentialsManagerException.SESSION_EXPIRED)
+                    return@execute
+                }
                 val key = getAPICredentialsKey(audience, scope)
                 val apiCredentialsJson = storage.retrieveString(key)
                 var apiCredentialType: String? = null

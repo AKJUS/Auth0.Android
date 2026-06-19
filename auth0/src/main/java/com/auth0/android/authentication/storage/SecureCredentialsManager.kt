@@ -169,7 +169,10 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
      * Saves the given credentials in the Storage.
      *
      * @param credentials the credentials to save.
-     * @throws CredentialsManagerException if the credentials couldn't be encrypted. Some devices are not compatible at all with the cryptographic
+     * @throws CredentialsManagerException with code `SESSION_EXPIRED` if the credentials carry an
+     * IPSIE `session_expiry` claim that is already past its ceiling at creation time, with code
+     * `INVALID_CREDENTIALS` if neither an access_token nor an id_token is present, or if the
+     * credentials couldn't be encrypted. Some devices are not compatible at all with the cryptographic
      * implementation and will have [CredentialsManagerException.isDeviceIncompatible] return true.
      */
     @Throws(CredentialsManagerException::class)
@@ -281,6 +284,13 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
                 } catch (exception: CredentialsManagerException) {
                     Log.e(TAG, "Error while fetching existing credentials", exception)
                     callback.onFailure(exception)
+                    return@execute
+                }
+                // IPSIE session_expiry: enforce the upstream-IdP session ceiling before exchanging the
+                // refresh token, so the SSO exchange is never used to outlive the session.
+                if (isSessionExpired(existingCredentials.idToken)) {
+                    clearCredentials()
+                    callback.onFailure(CredentialsManagerException.SESSION_EXPIRED)
                     return@execute
                 }
                 if (existingCredentials.refreshToken.isNullOrEmpty()) {
@@ -715,6 +725,14 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
         headers: Map<String, String>,
         callback: Callback<APICredentials, CredentialsManagerException>
     ) {
+        // IPSIE session_expiry: short-circuit before any biometric prompt or refresh. The ceiling is
+        // read from the value persisted at login (KEY_SESSION_EXPIRY); past it we clear and surface the
+        // dedicated error rather than prompting biometrics for a session that can no longer be served.
+        if (isSessionExpired(null)) {
+            clearCredentials()
+            callback.onFailure(CredentialsManagerException.SESSION_EXPIRED)
+            return
+        }
 
         if (fragmentActivity != null && localAuthenticationOptions != null && localAuthenticationManagerFactory != null) {
 
@@ -977,6 +995,15 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
     ) {
         serialExecutor.execute {
             runCatchingOnExecutor(callback) {
+                // IPSIE session_expiry: enforce the upstream-IdP session ceiling before serving cached
+                // API credentials or exchanging the refresh token. The ceiling is read from the value
+                // persisted at login (KEY_SESSION_EXPIRY) so it holds even though the credentials blob
+                // is encrypted; past it we clear and surface the dedicated error.
+                if (isSessionExpired(null)) {
+                    clearCredentials()
+                    callback.onFailure(CredentialsManagerException.SESSION_EXPIRED)
+                    return@execute
+                }
                 val encryptedEncodedJson =
                     storage.retrieveString(getAPICredentialsKey(audience, scope))
 
