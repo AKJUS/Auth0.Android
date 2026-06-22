@@ -2736,6 +2736,34 @@ public class CredentialsManagerTest {
     }
 
     @Test
+    public fun shouldEnforcePinnedSessionExpiryWhenRefreshedIdTokenReEmitsLaterValue() {
+        val nowSeconds = CredentialsMock.CURRENT_TIME_MS / 1000
+        Mockito.`when`(storage.retrieveString("com.auth0.id_token")).thenReturn("idToken")
+        Mockito.`when`(storage.retrieveString("com.auth0.access_token")).thenReturn("accessToken")
+        Mockito.`when`(storage.retrieveString("com.auth0.refresh_token")).thenReturn("refreshToken")
+        Mockito.`when`(storage.retrieveString("com.auth0.token_type")).thenReturn("type")
+        Mockito.`when`(storage.retrieveLong("com.auth0.expires_at"))
+            .thenReturn(CredentialsMock.ONE_HOUR_AHEAD_MS)
+        Mockito.`when`(storage.retrieveString("com.auth0.scope")).thenReturn("scope")
+        // The (refreshed) ID token re-emits a *later* session_expiry; it must NOT raise the ceiling.
+        prepareJwtDecoderMockWithSessionExpiry(nowSeconds + 100_000)
+        // The pinned ceiling from the initial login is already reached. Stubbed after the helper so
+        // the storage-first lookup sees this value rather than the helper's default null.
+        Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry")).thenReturn(nowSeconds - 100)
+
+        manager.getCredentials(callback)
+
+        verify(callback).onFailure(exceptionCaptor.capture())
+        MatcherAssert.assertThat(
+            exceptionCaptor.firstValue,
+            Is.`is`(CredentialsManagerException.SESSION_EXPIRED)
+        )
+        // Enforcement honors the pinned value, so the refresh-token grant is never used.
+        verifyZeroInteractions(client)
+        verify(storage).remove("com.auth0.session_expiry")
+    }
+
+    @Test
     public fun shouldNotOverwriteStoredSessionExpiryWhenSavingRefreshedCredentials() {
         val credentials: Credentials = CredentialsMock.create(
             "idToken", "accessToken", "type", "refreshToken",
@@ -2761,6 +2789,11 @@ public class CredentialsManagerTest {
         val jwtMock = mock<Jwt>()
         Mockito.`when`(jwtMock.sessionExpiry).thenReturn(sessionExpiry)
         Mockito.`when`(jwtDecoder.decode("idToken")).thenReturn(jwtMock)
+        // No value is pinned in storage by default, so the ceiling resolves from the idToken claim
+        // above. (Mockito returns 0L for an unstubbed Long?-returning property, which the
+        // storage-first lookup in isSessionExpired would otherwise consume as a bogus ceiling.)
+        // Tests that exercise a pinned value stub this key explicitly *after* calling this helper.
+        Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry")).thenReturn(null)
     }
 
     private fun prepareJwtDecoderMock(expiresAt: Date?) {

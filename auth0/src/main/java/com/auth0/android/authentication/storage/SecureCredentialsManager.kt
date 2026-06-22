@@ -884,7 +884,7 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
                 val willAccessTokenExpire = willExpire(expiresAt, minTtl.toLong())
                 val scopeChanged = hasScopeChanged(credentials.scope, scope)
                 if (!forceRefresh && !willAccessTokenExpire && !scopeChanged) {
-                    callback.onSuccess(credentials)
+                    callback.onSuccess(stampPinnedSessionExpiry(credentials))
                     return@execute
                 }
                 if (credentials.refreshToken == null) {
@@ -969,7 +969,7 @@ public class SecureCredentialsManager @VisibleForTesting(otherwise = VisibleForT
 
                 try {
                     saveCredentials(freshCredentials)
-                    callback.onSuccess(freshCredentials)
+                    callback.onSuccess(stampPinnedSessionExpiry(freshCredentials))
                 } catch (error: CredentialsManagerException) {
                     val exception = CredentialsManagerException(
                         CredentialsManagerException.Code.STORE_FAILED, error

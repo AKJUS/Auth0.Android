@@ -108,6 +108,28 @@ public class CredentialsTest {
         MatcherAssert.assertThat(credentials.sessionExpiresAt, Matchers.`is`(Matchers.nullValue()))
     }
 
+    @Test
+    public fun shouldPreferPinnedSessionExpiresAtOverIdTokenClaim() {
+        // The manager stamps the value pinned at login; it must take precedence over a (later)
+        // claim re-emitted on the current ID token so the public value matches what is enforced.
+        val credentials = Credentials(
+            jwtWithPayload("""{"session_expiry":1700000000}"""),
+            "accessToken", "type", "refreshToken", Date(), "scope"
+        )
+        credentials.pinnedSessionExpiresAt = 1690000000L
+        MatcherAssert.assertThat(credentials.sessionExpiresAt, Matchers.`is`(1690000000L))
+    }
+
+    @Test
+    public fun shouldFallBackToIdTokenClaimWhenNoPinnedSessionExpiresAt() {
+        val credentials = Credentials(
+            jwtWithPayload("""{"session_expiry":1700000000}"""),
+            "accessToken", "type", "refreshToken", Date(), "scope"
+        )
+        // No pinned value (credentials not served by a manager) -> decode from the ID token.
+        MatcherAssert.assertThat(credentials.sessionExpiresAt, Matchers.`is`(1700000000L))
+    }
+
     private fun jwtWithPayload(jsonPayload: String): String {
         val header = encode("""{"alg":"HS256","typ":"JWT"}""")
         val payload = encode(jsonPayload)

@@ -3728,6 +3728,10 @@ public class SecureCredentialsManagerTest {
             willExpireAt = Date(CredentialsMock.ONE_HOUR_AHEAD_MS),
             scope = "scope"
         )
+        // Nothing pinned in storage, so the ceiling resolves from the decrypted ID token claim
+        // below. (Mockito returns 0L for the unstubbed key, which the storage-first lookup in
+        // isSessionExpired would otherwise consume as a bogus "no ceiling" value.)
+        Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry")).thenReturn(null)
         // The decrypted ID token carries a session_expiry ceiling already in the past.
         val jwtMock = mock<Jwt>()
         Mockito.`when`(jwtMock.sessionExpiry).thenReturn(nowSeconds - 100)

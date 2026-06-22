@@ -238,6 +238,16 @@ public class JwtTest {
         assertThat(jwt.sessionExpiry, `is`(1700000000L))
     }
 
+    @Test
+    public fun shouldGetNullSessionExpiryIfImplausiblyLarge() {
+        // A value mistakenly emitted in milliseconds (1700000000000) is ~50,000 years out in seconds
+        // and would silently disable the ceiling; it must be treated as "no ceiling" (null) instead.
+        val jwt = Jwt(jwtWithPayload("""{"session_expiry":1700000000000}"""))
+        assertThat(jwt, `is`(notNullValue()))
+
+        assertThat(jwt.sessionExpiry, `is`(nullValue()))
+    }
+
     /**
      * Builds a JWT with a fixed `alg=HS256` header and a dummy signature, encoding the given JSON
      * payload so that [Jwt] can decode it. The signature is never verified by [Jwt].

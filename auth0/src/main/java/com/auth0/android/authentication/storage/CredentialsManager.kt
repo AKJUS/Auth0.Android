@@ -490,13 +490,15 @@ public class CredentialsManager @VisibleForTesting(otherwise = VisibleForTesting
                 val scopeChanged = hasScopeChanged(storedScope, scope)
                 if (!forceRefresh && !willAccessTokenExpire && !scopeChanged) {
                     callback.onSuccess(
-                        recreateCredentials(
-                            idToken.orEmpty(),
-                            accessToken.orEmpty(),
-                            tokenType.orEmpty(),
-                            refreshToken,
-                            Date(expiresAt),
-                            storedScope
+                        stampPinnedSessionExpiry(
+                            recreateCredentials(
+                                idToken.orEmpty(),
+                                accessToken.orEmpty(),
+                                tokenType.orEmpty(),
+                                refreshToken,
+                                Date(expiresAt),
+                                storedScope
+                            )
                         )
                     )
                     return@execute
@@ -549,7 +551,7 @@ public class CredentialsManager @VisibleForTesting(otherwise = VisibleForTesting
                         fresh.scope
                     )
                     saveCredentials(credentials)
-                    callback.onSuccess(credentials)
+                    callback.onSuccess(stampPinnedSessionExpiry(credentials))
                 } catch (error: AuthenticationException) {
                     if (error.isMultifactorRequired) {
                         callback.onFailure(
