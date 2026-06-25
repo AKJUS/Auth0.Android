@@ -338,14 +338,12 @@ public abstract class BaseCredentialsManager internal constructor(
      * before the wall-clock ceiling, never after.
      */
     protected fun isSessionExpired(idToken: String?): Boolean {
-        val sessionExpiry = storage.retrieveLong(KEY_SESSION_EXPIRY)
-            ?: sessionExpiryFromIdToken(idToken)
+        // A non-positive value is not a valid Unix timestamp; treat it as "not pinned"/"no ceiling"
+        // (mirrors the unset/migration guard in [willExpire]) so a 0/negative stored sentinel falls
+        // through to the live claim rather than fail-open as "no ceiling".
+        val sessionExpiry = storage.retrieveLong(KEY_SESSION_EXPIRY)?.takeIf { it > 0 }
+            ?: sessionExpiryFromIdToken(idToken)?.takeIf { it > 0 }
             ?: return false
-        // A non-positive ceiling is not a valid Unix timestamp; treat it as "no ceiling" rather than
-        // already-expired (mirrors the guard in [willExpire] for unset/migration values).
-        if (sessionExpiry <= 0) {
-            return false
-        }
         val nowSeconds = currentTimeInMillis / 1000
         return nowSeconds + SESSION_EXPIRY_LEEWAY_SECONDS >= sessionExpiry
     }

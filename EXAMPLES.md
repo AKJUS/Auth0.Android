@@ -2937,6 +2937,7 @@ When an enterprise connection (for example an OIDC or Okta connection) is config
 The credentials managers enforce this ceiling automatically:
 
 - The ceiling is read from the ID token at login and persisted, so it survives refreshes whose ID token does not re-emit the claim.
+- `saveCredentials` rejects an already-expired session up front: if the ID token is already past its ceiling at login, the save throws `CredentialsManagerException.SESSION_EXPIRED` and nothing is persisted.
 - On every `getCredentials` call, if the ceiling has been reached the stored credentials are cleared and the call fails with `CredentialsManagerException.SESSION_EXPIRED`. The refresh token is **never** used to renew a session past the ceiling.
 - A small negative clock-skew leeway (~30 seconds) is applied, so the session is treated as expired slightly *before* the wall-clock ceiling, never after.
 - Connections that do not emit the claim are unaffected — there is no ceiling and behavior is unchanged.

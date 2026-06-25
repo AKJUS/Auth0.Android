@@ -2616,6 +2616,32 @@ public class CredentialsManagerTest {
     }
 
     @Test
+    public fun shouldReturnCredentialsCarryingPinnedSessionExpiresAt() {
+        val nowSeconds = CredentialsMock.CURRENT_TIME_MS / 1000
+        val pinnedCeiling = nowSeconds + 100_000
+        Mockito.`when`(storage.retrieveString("com.auth0.id_token")).thenReturn("idToken")
+        Mockito.`when`(storage.retrieveString("com.auth0.access_token")).thenReturn("accessToken")
+        Mockito.`when`(storage.retrieveString("com.auth0.refresh_token")).thenReturn("refreshToken")
+        Mockito.`when`(storage.retrieveString("com.auth0.token_type")).thenReturn("type")
+        // Access token not yet expired -> cached credentials are served without a refresh.
+        Mockito.`when`(storage.retrieveLong("com.auth0.expires_at"))
+            .thenReturn(CredentialsMock.ONE_HOUR_AHEAD_MS)
+        Mockito.`when`(storage.retrieveString("com.auth0.scope")).thenReturn("scope")
+        prepareJwtDecoderMockWithSessionExpiry(pinnedCeiling)
+        // Pinned at login. The returned credentials must carry this value via stampPinnedSessionExpiry,
+        // not a value re-decoded from the live ID token. Stubbed after the helper's default null.
+        Mockito.`when`(storage.retrieveLong("com.auth0.session_expiry")).thenReturn(pinnedCeiling)
+
+        manager.getCredentials(callback)
+
+        verify(callback).onSuccess(credentialsCaptor.capture())
+        MatcherAssert.assertThat(
+            credentialsCaptor.firstValue.sessionExpiresAt,
+            Is.`is`(pinnedCeiling)
+        )
+    }
+
+    @Test
     public fun shouldNotEnforceSessionExpiryWhenClaimAndStoredValueAreAbsent() {
         Mockito.`when`(storage.retrieveString("com.auth0.id_token")).thenReturn("idToken")
         Mockito.`when`(storage.retrieveString("com.auth0.access_token")).thenReturn("accessToken")
