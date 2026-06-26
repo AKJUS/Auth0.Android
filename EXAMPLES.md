@@ -3063,7 +3063,23 @@ The credentials managers enforce this ceiling automatically:
 - A small negative clock-skew leeway (~30 seconds) is applied, so the session is treated as expired slightly *before* the wall-clock ceiling, never after.
 - Connections that do not emit the claim are unaffected — there is no ceiling and behavior is unchanged.
 
+> ⚠️ **The `session_expiry` value must be Unix seconds.** Per [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519), the claim is interpreted as seconds since the Unix epoch. A millisecond-magnitude value (e.g. `1700000000000`) resolves to a date ~50,000 years out and would **silently disable** the ceiling, so the SDK treats any implausibly large value (`>= 10_000_000_000`) as "no ceiling". The SDK also **fails open** on any malformed value — a non-numeric, zero, negative, or millisecond value is treated as "no ceiling" and the session proceeds without enforcement. When emitting the claim from an Action, always use seconds (divide a milliseconds timestamp by 1000).
+
 > ⚠️ **Upgrade note:** For a user whose connection asserts `session_expiry`, a `getCredentials` call that previously succeeded can now fail with `SESSION_EXPIRED` once the ceiling is reached. Make sure your error handling treats `SESSION_EXPIRED` as a prompt to re-authenticate.
+
+#### Emitting the claim
+
+The `session_expiry` claim is not emitted by default — it is set on your tenant by a [Post-Login Action](https://auth0.com/docs/customize/actions/flows-and-triggers/login-flow) that adds it to the ID token, for example:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  // session_expiry must be expressed in Unix seconds
+  const sessionExpiry = Math.floor(Date.now() / 1000) + 8 * 60 * 60; // 8 hours from now
+  api.idToken.setCustomClaim('session_expiry', sessionExpiry);
+};
+```
+
+> 📝 A link to the canonical Auth0 `session_expiry` Action guide will be added here once it is published.
 
 You can read the ceiling for a given credential set from `Credentials.sessionExpiresAt` (a nullable `Long` of Unix seconds, `null` when the connection does not emit the claim):
 
